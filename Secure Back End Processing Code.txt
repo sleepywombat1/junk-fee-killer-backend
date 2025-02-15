@@ -1,0 +1,152 @@
+from flask import Flask, request, jsonify
+import os
+import base64
+import logging
+import time
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
+import tempfile
+import shutil
+import PyPDF2
+import openai
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from concurrent.futures import ThreadPoolExecutor
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+executor = ThreadPoolExecutor(max_workers=5)  # Optimize AI processing with thread pooling
+def get_env_var(var_name, default_value):
+    return os.getenv(var_name, default_value)
+
+app = Flask(__name__)
+limiter = Limiter(get_remote_address, app=app, default_limits=["10 per minute"])  # Rate limiting
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+SECRET_KEY = get_env_var('SECRET_KEY', os.urandom(32))  # Use environment variable for security
+
+def derive_key(secret_key, salt):
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,
+        backend=default_backend()
+    )
+    return kdf.derive(secret_key)
+
+def encrypt_file(file_path, secret_key):
+    try:
+        salt = os.urandom(16)
+        key = derive_key(secret_key, salt)
+        iv = os.urandom(16)
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        encryptor = cipher.encryptor()
+        
+        with open(file_path, "rb") as f:
+            plaintext = f.read()
+        
+        pad_len = 16 - (len(plaintext) % 16)
+        plaintext += bytes([pad_len]) * pad_len
+        
+        ciphertext = encryptor.update(plaintext) + encryptor.finalize()
+        encrypted_file_path = file_path + ".enc"
+        with open(encrypted_file_path, "wb") as f:
+            f.write(salt + iv + ciphertext)
+        
+        logging.info(f"File encrypted successfully: {file_path}")
+        return encrypted_file_path
+    except Exception as e:
+        logging.error(f"Error encrypting file: {e}")
+        return None
+
+def decrypt_file(encrypted_file_path, secret_key):
+    try:
+        with open(encrypted_file_path, "rb") as f:
+            data = f.read()
+        
+        salt, iv, ciphertext = data[:16], data[16:32], data[32:]
+        key = derive_key(secret_key, salt)
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        
+        plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+        
+        pad_len = plaintext[-1]
+        plaintext = plaintext[:-pad_len]
+        
+        decrypted_file_path = encrypted_file_path.replace(".enc", "_decrypted.pdf")
+        with open(decrypted_file_path, "wb") as f:
+            f.write(plaintext)
+        
+        logging.info(f"File decrypted successfully: {encrypted_file_path}")
+        return decrypted_file_path
+    except Exception as e:
+        logging.error(f"Error decrypting file: {e}")
+        return None
+
+def extract_text_from_pdf(file_path):
+    try:
+        with open(file_path, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            text = " ".join(page.extract_text() for page in reader.pages if page.extract_text())
+        logging.info(f"Text extracted from PDF successfully: {file_path}")
+        return text
+    except Exception as e:
+        logging.error(f"Error extracting text from PDF: {e}")
+        return ""
+
+def ai_detect_junk_fees(text):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are an expert in detecting hidden fees in financial documents. Identify misleading charges with reasoning."},
+                {"role": "user", "content": f"Analyze this document thoroughly. Identify vague terms, ambiguous charges, service fees, processing fees, and other hidden costs. Provide clear explanations and suggest how to dispute these charges: {text}"}
+            ]
+        )
+        logging.info("AI successfully analyzed document for junk fees.")
+        return response["choices"][0]["message"]["content"]
+    except Exception as e:
+        logging.error(f"Error during AI processing: {e}")
+        return "Error analyzing document."
+
+@app.route("/upload", methods=["POST"])
+@limiter.limit("5 per minute")  # Limit uploads per user to prevent abuse
+def upload_file():
+    start_time = time.time()
+    if "file" not in request.files:
+        return jsonify({"message": "No file part"}), 400
+    
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"message": "No selected file"}), 400
+    
+    temp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(temp_dir, file.filename)
+    file.save(file_path)
+    
+    encrypted_path = encrypt_file(file_path, SECRET_KEY)
+    if not encrypted_path:
+        return jsonify({"message": "Error encrypting file"}), 500
+    
+    os.remove(file_path)
+    shutil.move(encrypted_path, os.path.join(UPLOAD_FOLDER, os.path.basename(encrypted_path)))
+    
+    decrypted_path = decrypt_file(os.path.join(UPLOAD_FOLDER, os.path.basename(encrypted_path)), SECRET_KEY)
+    if not decrypted_path:
+        return jsonify({"message": "Error decrypting file"}), 500
+    
+    text = extract_text_from_pdf(decrypted_path)
+    detected_fees = executor.submit(ai_detect_junk_fees, text).result()
+    os.remove(decrypted_path)
+    
+    processing_time = time.time() - start_time
+    logging.info(f"File successfully processed in {processing_time:.2f} seconds and junk fees detected.")
+    return jsonify({"message": "File processed successfully", "detected_fees": detected_fees, "processing_time": processing_time})
+
+if __name__ == "__main__":
+    logging.info("Starting secure file processing server...")
+    app.run(debug=True, threaded=True, host='0.0.0.0', port=5000)
