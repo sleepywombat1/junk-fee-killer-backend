@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: junk-fee-killer-backend
+    runtime: python
+    envVars:
+      - key: TESSERACT_PATH
+        value: "/usr/bin/tesseract"
+    buildCommand: "./build.sh && pip install -r requirements.txt"
+    startCommand: "gunicorn app:app"

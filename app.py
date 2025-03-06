@@ -3,6 +3,10 @@ from flask_cors import CORS
 import re
 import io
 import pytesseract
+import os
+# Ensure Tesseract OCR is found
+pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"  # Common path for Linux
+
 from pdf2image import convert_from_bytes
 
 app = Flask(__name__)
