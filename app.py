@@ -10,7 +10,7 @@ pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"  # Common path for 
 from pdf2image import convert_from_bytes
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "https://junk-fee-killer-frontend-3yphvpky9-marks-projects-42cdc383.vercel.app"}})
+CORS(app, resources={r"/*": {"origins": "https://junk-fee-killer-frontend-v2.vercel.app"}})
 
 # Define regex patterns for hidden fees
 FEE_PATTERNS = [
