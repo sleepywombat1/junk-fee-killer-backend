@@ -6,8 +6,9 @@ const path = require('path');
 require('dotenv').config();
 
 // Import routes
-const uploadRoutes = require('./app/uploadRoutes');
-const junkFeeRoutes = require('./app/junkFeeRoutes');
+// Update the paths to match your actual file structure
+const uploadRoutes = require('./uploadRoutes');
+const junkFeeRoutes = require('./junkFeeRoutes');
 
 // Initialize express app
 const app = express();
