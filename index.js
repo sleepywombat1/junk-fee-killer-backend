@@ -5,7 +5,7 @@ const morgan = require('morgan');
 const path = require('path');
 require('dotenv').config();
 
-// Import routes
+// Import route
 // Update the paths to match your actual file structure
 const uploadRoutes = require('./uploadRoutes');
 const junkFeeRoutes = require('./junkFeeRoutes');
