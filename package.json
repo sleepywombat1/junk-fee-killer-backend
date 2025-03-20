@@ -2,7 +2,7 @@
   "name": "junk-fee-killer-backend",
   "version": "1.0.0",
   "description": "Backend for the Junk Fee Killer application",
-  "main": "server.js",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
